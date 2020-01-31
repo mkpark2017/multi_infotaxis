@@ -11,6 +11,8 @@
 #include <chrono>
 #include <ctime> // for std::time()
 
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/point_cloud2_iterator.h> //for PointCloud2Modifier
 
 using namespace std; 
 
@@ -26,6 +28,10 @@ float neighbor_g[num_agent];
 float neighbor_x[num_agent];
 float neighbor_y[num_agent];
 float neighbor_z[num_agent];
+
+float neig_x[num_agent];
+float neig_y[num_agent];
+float neig_z[num_agent];
 
 float temp_n_g[num_agent];
 float temp_n_x[num_agent];
@@ -44,6 +50,37 @@ void pose_global_callback(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
   g_p_x = g_pose_msg->longitude;
   g_p_y = g_pose_msg->latitude;
   g_p_z = g_pose_msg->altitude;
+}
+
+void neig_callback1(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
+{
+  neig_x[0] = g_pose_msg->longitude;
+  neig_y[0] = g_pose_msg->latitude;
+  neig_z[0] = g_pose_msg->altitude;
+}
+void neig_callback2(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
+{
+  neig_x[1] = g_pose_msg->longitude;
+  neig_y[1] = g_pose_msg->latitude;
+  neig_z[1] = g_pose_msg->altitude;
+}
+void neig_callback3(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
+{
+  neig_x[2] = g_pose_msg->longitude;
+  neig_y[2] = g_pose_msg->latitude;
+  neig_z[2] = g_pose_msg->altitude;
+}
+void neig_callback4(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
+{
+  neig_x[3] = g_pose_msg->longitude;
+  neig_y[3] = g_pose_msg->latitude;
+  neig_z[3] = g_pose_msg->altitude;
+}
+void neig_callback5(const sensor_msgs::NavSatFix::ConstPtr& g_pose_msg)
+{
+  neig_x[4] = g_pose_msg->longitude;
+  neig_y[4] = g_pose_msg->latitude;
+  neig_z[4] = g_pose_msg->altitude;
 }
 
 void source_callback(const sensor_msgs::NavSatFix::ConstPtr& source_msg)
@@ -224,8 +261,17 @@ int main(int argc, char **argv)
   mavros_msgs::GlobalPositionTarget target_msg;
   ros::Publisher current_m_pub = nh.advertise<geometry_msgs::PoseStamped>("current_measure", 1);
   geometry_msgs::PoseStamped current_m_msg;
+  ros::Publisher pf_pub = nh.advertise<sensor_msgs::PointCloud2>("particle_filter_points", 1);
+
 
   ros::Subscriber g_p_sub = nh.subscribe("mavros/global_position/global", 10, pose_global_callback);
+
+  ros::Subscriber n_p_sub1 = nh.subscribe("/UAV1/mavros/global_position/global", 10, neig_callback1);
+  ros::Subscriber n_p_sub2 = nh.subscribe("/UAV2/mavros/global_position/global", 10, neig_callback2);
+  ros::Subscriber n_p_sub3 = nh.subscribe("/UAV3/mavros/global_position/global", 10, neig_callback3);
+  ros::Subscriber n_p_sub4 = nh.subscribe("/UAV4/mavros/global_position/global", 10, neig_callback4);
+  ros::Subscriber n_p_sub5 = nh.subscribe("/UAV5/mavros/global_position/global", 10, neig_callback5);
+
   float i_g_x;
   float i_g_y;
   float i_g_z;
@@ -285,7 +331,6 @@ int main(int argc, char **argv)
   std::uniform_real_distribution<double> particles(0.0, 1.0);
 
   
-
   for(int i=0; i<num_particle; i++)
   {
     xp[i] = particles(mersenne) * nx;
@@ -312,10 +357,6 @@ int main(int argc, char **argv)
   ros::Rate loop_rate(10);
 
   //--------------------------------Strat loop-----------------------------------
-  int start_ex = 0;
-  int init_x = 0;
-  int init_y = 0;
-  int init_z = 0;
   float c_x, c_y, c_z;
   float err_x, err_y, err_z, dist_err;
   double mean_xp=0.0, mean_yp=0.0, mean_qp=0.0, mean_dp=0.0;
@@ -357,31 +398,46 @@ int main(int argc, char **argv)
 
   var_x = var_cal(xp, wpnorm, num_particle);
   var_y = var_cal(yp, wpnorm, num_particle);
-
+  bool start_ex = false;
+  bool init_x = false, init_y = false, init_z = false;
+  bool init_s_x = false, init_s_y = false, init_s_z = false;
   while (ros::ok())
   {
-    if ( (-1.0*pow(10.0,-3.0)>g_p_x || g_p_x>1.0*pow(10.0,-3.0) ) && init_x == 0)
+
+    if ( (-0.0001>g_p_x || g_p_x>0.0001 ) && init_x == false)
     {
       i_g_x = g_p_x;
-      init_x = 1;
+      init_x = true;
     }
-    if ( (-1.0*pow(10.0,-3.0)>g_p_y || g_p_y>1.0*pow(10.0,-3.0) ) && init_y == 0)
+    if ( (-0.0001>g_p_y || g_p_y>0.0001 ) && init_y == false)
     {
       i_g_y = g_p_y;
-      init_y = 1;
+      init_y = true;
     }
-    if ( (-1.0*pow(10.0,-3.0)>g_p_z || g_p_z>1.0*pow(10.0,-3.0) ) && init_z == 0)
+    if ( (-0.0001>g_p_z || g_p_z>0.0001 ) && init_z == false)
     {
       i_g_z = g_p_z;
-      init_z = 1;
+      init_z = true;
     }
-    if (init_x == 1 && init_y == 1 && init_z == 1)
+    if ( (-0.0001>s_x || s_x>0.0001 ) && init_s_x == false)
     {
-      start_ex = 1;
+      init_s_x = true;
+    }
+    if ( (-0.0001>s_y || s_y>0.0001 ) && init_s_y == false)
+    {
+      init_s_y = true;
+    }
+    if ( (-0.0001>s_z || s_z>0.0001 ) && init_s_z == false)
+    {
+      init_s_z = true;
+    }
+    if (init_x == true && init_y == true && init_z == true && init_s_x == true && init_s_y == true && init_s_z == true)
+    {
+      start_ex = true;
     }
 //cout<< "iter = " << iter << endl;
 //cout<< "max_step = " << max_step << endl;
-    if (start_ex == 1 && iter<max_step)
+    if (start_ex == true && iter<max_step)
     {
       source_x = (s_x - i_g_x)*pow(10.0,5.0);
       source_y = (s_y - i_g_y)*pow(10.0,5.0);
@@ -401,7 +457,7 @@ int main(int argc, char **argv)
       err_y = y_tgt - (c_y - i_g_y)*pow(10.0,5.0);
       err_z = z_tgt - (c_z - i_g_z);
       dist_err = sqrt(err_x*err_x + err_y*err_y + err_z*err_z);
-      cout<< "dist_err = " << dist_err << endl;
+      cout<< "tgt_x: "<< x_tgt << "  tgt_y: " << y_tgt << "  tgt_z: " << z_tgt << "  dist_err = " << dist_err << endl;
 
 	current_m_msg.pose.position.x = xx;
 	current_m_msg.pose.position.y = yy;
@@ -500,9 +556,19 @@ cout << endl << "sensing_count = " << sensing_count;
 
         int num_resol = 20;
         double gauss_x[num_resol];
-        for (int i=0; i<num_resol; i++)
+        if (gas_s_v <= 0.0)
         {
-          gauss_x[i] = (gas_s_v*i/num_resol)*3;
+          for (int i=0; i<num_resol; i++)
+          {
+            gauss_x[i] = (1.0*i/num_resol)*3.0;
+          }
+        } 
+        else
+        {
+          for (int i=0; i<num_resol; i++)
+          {
+            gauss_x[i] = (gas_s_v*i/num_resol)*3.0;
+          }
         }
 
         ros::spinOnce();
@@ -523,18 +589,19 @@ cout << endl << "sensing_count = " << sensing_count;
           if(neighbor_x[i]!=temp_n_x[i] || neighbor_y[i]!=temp_n_y[i] || neighbor_z[i]!=temp_n_z[i])
           {
             trig[i] = true;
-            temp_n_x[i] = neighbor_x[i];
+            temp_n_x[i] = neighbor_x[i]; //save current changed neighbor pose
             temp_n_y[i] = neighbor_y[i];
             temp_n_z[i] = neighbor_z[i];
           }
-cout << "trig = " << trig[i] << endl;
+          cout << "trig = " << trig[i] << endl; //check neighbor data received
         }
-cout << endl;
-        ga_pi = bayesian_update(xp, yp, qp, dp, ga_new_pi, nx, ny, ext_length, wind_vel_mean, wind_dir_mean, num_particle, sen_sig_m_est, env_sig, source_tau, dt);
+        cout << endl;
 
+        ga_pi = bayesian_update(xp, yp, qp, dp, ga_new_pi, nx, ny, ext_length, wind_vel_mean, wind_dir_mean, num_particle, sen_sig_m_est, env_sig, source_tau, dt); //using all neighbors' data in function
+ 
         for (int i=0; i<num_particle; i++)
         { wpnorm[i] = wpnorm[i]*ga_new_pi[i]; }
-
+        sum_wp = 0;
         for (int i=0; i<num_particle; i++)
         { sum_wp += wpnorm[i]; }
 
@@ -546,7 +613,7 @@ cout << endl;
         for (int i=0; i<num_particle; i++)
         { n_eff_inv += (wpnorm[i]*wpnorm[i]); }
         n_eff = 1.0/n_eff_inv;
-
+cout << "e_ff =" << n_eff << endl;
         if (n_eff < num_particle*0.5)
         {
           target_msg.header.stamp = ros::Time::now();
@@ -619,16 +686,36 @@ cout << endl;
 
         double var[4];
         bool obstacles[4];
-        double dist_x_ob = sqrt(pow(xx-source_x,2) + pow(yy-source_y,2) );
+        double dist_ob[num_agent+1], dist_ob_x[num_agent+1], dist_ob_y[num_agent+1];
+        for (int i=0; i<num_agent+1; i++)
+        {
+          dist_ob_x[i] = 100000;
+          dist_ob_y[i] = 100000;
+        }
+        dist_ob_x[0] = source_x - xx;
+        dist_ob_y[0] = source_y - yy;
+        dist_ob[0] = sqrt(pow(dist_ob_x[0],2) + pow(dist_ob_y[0],2) );
+
+        for (int i=0; i<num_agent; i++)
+        {
+          if (trig[i] == true )
+          {
+            dist_ob_x[i+1] = neighbor_x[i] - xx;
+            dist_ob_y[i+1] = neighbor_y[i] - yy;
+            dist_ob[i+1] = sqrt(pow(dist_ob_x[i+1],2) + pow(dist_ob_y[i+1],2) );
+            if (dist_ob[i+1] < 0.01 )
+            { dist_ob[i+1] = 100000; }
+          }
+        }
         double dist_throu;
         double deter_x_next_ob;
 
         double pdetrate, pdetconc;
-        double ga_val_temp, g_d_s[num_particle][num_resol];
-        double zu_tot[num_particle], zu_sum, gds_sum;
+        double ga_val_temp, g_d_s[num_particle][num_resol], gds_temp[num_resol];
+        double zu_tot[num_particle], zu_sum[num_resol], gds_sum;
         double zwpnorm[num_particle], wpnorm_temp[num_particle];
 
-        double entropy, val;
+        double entropy_next, entropy_now, entropy_delta, val;
         int ind = 0;
 
         for (int kk=0; kk<4; kk++)
@@ -641,71 +728,99 @@ cout << endl;
           target_msg.header.stamp = ros::Time::now();
           setpoint_pub.publish(target_msg);
 
-          if (dist_x_ob < ynew[0]+building_size/2)
+          for (int i=0; i<num_agent+1; i++)
           {
-            deter_x_next_ob = abs(xnew[kk]*(source_y-yy)-ynew[kk]*(source_x-xx));
-            dist_throu = deter_x_next_ob/sqrt(pow(xnew[kk],2)+pow(ynew[kk],2));
-            if (dist_throu <= building_size/2)
+            if (dist_ob[i] < ynew[0]+building_size/2)
             {
-cout << "conflicts to building: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
-              var[kk] = 0;
-              obstacles[kk] = true;
-              continue;
+              deter_x_next_ob = abs(xnew[kk]*dist_ob_y[i]-ynew[kk]*dist_ob_x[i+1]);
+              dist_throu = deter_x_next_ob/sqrt(pow(xnew[kk],2)+pow(ynew[kk],2));
+              if (dist_throu <= building_size/2)
+              {
+                double dZero = 0.0;
+                var[kk] = -1.0/dZero;
+                obstacles[kk] = true;
+                cout << "conflicts to obstacles: ";
+                cout << " x = " << xnext[kk];
+                cout << " y = " << ynext[kk] << endl;
+                cout << "Utility function[" << kk << "] = " << var[kk] << endl;
+                continue;
+              }
             }
           }
           if (xnext[kk]<ax_min || ynext[kk]<ay_min || xnext[kk]>ax_max || ynext[kk]>ay_max)
           {
-cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
-            var[kk] = 0;
+            double dZero = 0.0;
+            var[kk] = -1.0/dZero;
+            cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
+            cout << "Utility function[" << kk << "] = " << var[kk] << endl;
             continue;
           }
           if (obstacles[kk] == false)
           {
-            entropy = 0;
+            entropy_delta = 0;
             for (int i=0; i<num_particle; i++)
             {
               pdetrate = mean_concentration(xnext[kk],ynext[kk],znext[kk],xp[i],yp[i],qp[i],wind_vel_mean,wind_dir_mean,dp[i],source_tau);
               pdetconc = pdetrate*dt;
               for (int j=0; j<num_resol; j++)
-              { g_d_s[i][j] = normalCDF(gauss_x[j], pdetconc, pdetconc*sen_sig_m_est + env_sig); }
-	      if (g_d_s[i][num_resol-1] == 0)
+              { gds_temp[j] = normalCDF(gauss_x[j], pdetconc, pdetconc*sen_sig_m_est + env_sig); }
+	      if (gds_temp[num_resol-1] == 0)
               {
                 for (int j=0; j<num_resol; j++)
-                { g_d_s[i][j] = 1/num_resol; }
+                { gds_temp[j] = 1.0/(double)num_resol; }
               }
               else
               {
                 for (int j=0; j<num_resol; j++)
-                { g_d_s[i][j] = g_d_s[i][j]/g_d_s[i][num_resol-1]; }
+                { gds_temp[j] = gds_temp[j]/gds_temp[num_resol-1]; }
               }
-              for (int j=num_resol-1; j>0; j--)
-              { g_d_s[i][j] = g_d_s[i][j] - g_d_s[i][j-1]; }
-
+              for (int j=1; j<num_resol; j++)
+              { g_d_s[i][j] = gds_temp[j] - gds_temp[j-1]; }
+              g_d_s[i][0] = gds_temp[0];
+//cout << gds_temp[num_resol-1] << endl;
             }
             for (int j=0; j<num_resol; j++)
             {
-              zu_sum = 0;
+              zu_sum[j] = 0;
               for (int i=0; i<num_particle; i++)
               {
                 zu_tot[i] = g_d_s[i][j]*wpnorm[i];
-                zu_sum += zu_tot[i];
+                zu_sum[j] += zu_tot[i];
               }
+//cout << "sum_wp[" << j << "] = " << sum_wp << endl;
+//cout << "zu_sum[" << j << "] = " << zu_sum[j] << endl;
               for (int i=0; i<num_particle; i++)
               {
-                zwpnorm[i] = zu_tot[i]/zu_sum;
-                if(zwpnorm[i] == 0)
-                {
-                  zwpnorm[i] = 1;
-                }
-                if(wpnorm[i] == 0)
-                {
-                  wpnorm_temp[i] = 1;
-                }
+                if (zu_sum[j] == 0)
+                { zwpnorm[i] = 1; }
                 else
+                { zwpnorm[i] = zu_tot[i]/zu_sum[j]; }
+
+                if(zwpnorm[i] == 0)
+                { zwpnorm[i] = 1; }
+
+                if(wpnorm[i] == 0)
+                { wpnorm_temp[i] = 1; }
+                else
+                { wpnorm_temp[i] = wpnorm[i]; }
+
+                entropy_next = -zu_sum[j]*zwpnorm[i]*log2(zwpnorm[i]);
+                entropy_now = -wpnorm_temp[i]*log2(wpnorm_temp[i]);
+                entropy_delta += -(entropy_next - entropy_now) ;
+
+                if (isnan(entropy_delta))
                 {
-                  wpnorm_temp[i] = wpnorm[i];
+               /*   for (int j=0; j<num_resol; j++)
+                  {
+                    cout <<endl <<"gds_temp["<<j<< "] = " <<gds_temp[j] << endl;
+                    cout << "gauss_x[" << j <<"] = " <<gauss_x[j] << endl <<endl;
+                  }*/
+                  cout << "entropy_next = " << entropy_next << endl;
+                  cout << "zwpnorm["<<i <<"][" << j << "] = " << zwpnorm[i] << endl;
+                  cout << "entropy_now = " << entropy_now << endl;
+                 
+                  break;
                 }
-                entropy -= -zu_sum*zwpnorm[i]*log2(zwpnorm[i]) + wpnorm_temp[i]*log2(wpnorm_temp[i]);
               }
             }
             int x_poten = (int)round(xnext[kk]);
@@ -714,8 +829,9 @@ cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
             { x_poten = 0; }
             if (y_poten < 0)
             { y_poten = 0; }
-            var[kk] = entropy/map[x_poten][y_poten];
-            cout << "Utility function = " << var << endl;
+            var[kk] = entropy_delta/map[x_poten][y_poten];
+            cout << "Utility function[" << kk << "] = " << var[kk] << endl;
+
             if (kk == 1)
             {
               ind = 1;
@@ -745,33 +861,84 @@ cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
       } // if reaching setpoint
       else
       {
+        for (int i=0; i<num_agent; i++)
+        {
+          if (-0.0001>neig_x[i] || neig_y[i]>0.0001 )
+          {
+            double dist_x = (g_p_x - neig_x[i])*pow(10.0,5.0);
+            double dist_y = (g_p_y - neig_y[i])*pow(10.0,5.0);
+            double dist_xy = sqrt(dist_x*dist_x + dist_y*dist_y);
+            if (dist_xy >0.01 && dist_xy < 2)
+            {
+              target_msg.longitude = g_p_x;
+              target_msg.latitude = g_p_y;
+              target_msg.altitude = g_p_z;
+              target_msg.yaw = 0.0;
+              target_msg.header.stamp = ros::Time::now();
+              setpoint_pub.publish(target_msg);
+              cout << "****** Emergency stop ********** " << endl;
+     // cout<< "tgt_x: "<< g_p_x << "  tgt_y: " << g_p_y << "  tgt_z: " << g_p_z << endl;
+            }
+          }
+        }
+
         ros::spinOnce();
         loop_rate.sleep();
       }
+
+      //declare message and sizes
+      sensor_msgs::PointCloud2 cloud;
+      cloud.header.stamp = ros::Time::now();
+      cloud.header.frame_id = "map";
+      cloud.width  = num_particle;
+      cloud.height = 1;
+      cloud.is_bigendian = false;
+      cloud.is_dense = false; // there may be invalid points
+
+      //for fields setup
+      sensor_msgs::PointCloud2Modifier modifier(cloud);
+      modifier.setPointCloud2FieldsByString(2,"xyz","rgb");
+      modifier.resize(num_particle);
+
+      //iterators
+      sensor_msgs::PointCloud2Iterator<float> out_x(cloud, "x");
+      sensor_msgs::PointCloud2Iterator<float> out_y(cloud, "y");
+      sensor_msgs::PointCloud2Iterator<float> out_z(cloud, "z");
+      sensor_msgs::PointCloud2Iterator<uint8_t> out_r(cloud, "r");
+      //sensor_msgs::PointCloud2Iterator<uint8_t> out_g(cloud, "g");
+      //sensor_msgs::PointCloud2Iterator<uint8_t> out_b(cloud, "b");
+
+      for(int i=0; i<num_particle; i++)
+      {
+        *out_x = xp[i];
+        *out_y = yp[i];
+        *out_z = qp[i];
+
+        *out_r = wpnorm[i];
+
+        
+        //increment
+        ++out_x;
+        ++out_y;
+        ++out_z;
+        ++out_r;
+      }
+      pf_pub.publish(cloud);
     } // if start the experiment
     else
     {
-//    cout << "neighbor_1 = " << neighbor_g[0] << endl;
+      current_m_msg.pose.position.x = xx;
+      current_m_msg.pose.position.y = yy;
+      current_m_msg.pose.position.z = zz;
+      current_m_msg.pose.orientation.w = gas_s_v;
+      current_m_msg.header.stamp = ros::Time::now();
+      current_m_pub.publish(current_m_msg);
+
+      cout << "start_ex = " << start_ex << endl;
 
 
-//    cout << "time = " << std::time(0) << endl;
-//    cout << "init_x = " << i_g_x << endl;
-//    cout << "init_y = " << i_g_y << endl;
-//    cout << "init_z = " << i_g_z << endl;
-	current_m_msg.pose.position.x = xx;
-	current_m_msg.pose.position.y = yy;
-	current_m_msg.pose.position.z = zz;
-        current_m_msg.pose.orientation.w = gas_s_v;
-	current_m_msg.header.stamp = ros::Time::now();
-	current_m_pub.publish(current_m_msg);
-
-    cout << "start_ex = " << start_ex << endl;
-//    cout << "global_pose = " << g_p_x << endl;
-
-
-    ros::spinOnce();
-    loop_rate.sleep();
-//    cout << "trig = " << trig << endl;
+      ros::spinOnce();
+      loop_rate.sleep();
     }
   }
 

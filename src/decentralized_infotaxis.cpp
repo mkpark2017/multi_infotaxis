@@ -11,6 +11,8 @@
 #include <chrono>
 #include <ctime> // for std::time()
 
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/point_cloud2_iterator.h> //for PointCloud2Modifier
 
 using namespace std; 
 
@@ -224,6 +226,8 @@ int main(int argc, char **argv)
   mavros_msgs::GlobalPositionTarget target_msg;
   ros::Publisher current_m_pub = nh.advertise<geometry_msgs::PoseStamped>("current_measure", 1);
   geometry_msgs::PoseStamped current_m_msg;
+  ros::Publisher pf_pub = nh.advertise<sensor_msgs::PointCloud2>("particle_filter_points", 1);
+
 
   ros::Subscriber g_p_sub = nh.subscribe("mavros/global_position/global", 10, pose_global_callback);
   float i_g_x;
@@ -285,7 +289,6 @@ int main(int argc, char **argv)
   std::uniform_real_distribution<double> particles(0.0, 1.0);
 
   
-
   for(int i=0; i<num_particle; i++)
   {
     xp[i] = particles(mersenne) * nx;
@@ -401,7 +404,7 @@ int main(int argc, char **argv)
       err_y = y_tgt - (c_y - i_g_y)*pow(10.0,5.0);
       err_z = z_tgt - (c_z - i_g_z);
       dist_err = sqrt(err_x*err_x + err_y*err_y + err_z*err_z);
-      cout<< "dist_err = " << dist_err << endl;
+      cout<< "tgt_x: "<< x_tgt << "  tgt_y: " << y_tgt << "  tgt_z: " << z_tgt << "  dist_err = " << dist_err << endl;
 
 	current_m_msg.pose.position.x = xx;
 	current_m_msg.pose.position.y = yy;
@@ -500,9 +503,19 @@ cout << endl << "sensing_count = " << sensing_count;
 
         int num_resol = 20;
         double gauss_x[num_resol];
-        for (int i=0; i<num_resol; i++)
+        if (gas_s_v <= 0.0)
         {
-          gauss_x[i] = (gas_s_v*i/num_resol)*3;
+          for (int i=0; i<num_resol; i++)
+          {
+            gauss_x[i] = (1.0*i/num_resol)*3.0;
+          }
+        } 
+        else
+        {
+          for (int i=0; i<num_resol; i++)
+          {
+            gauss_x[i] = (gas_s_v*i/num_resol)*3.0;
+          }
         }
 
         ros::spinOnce();
@@ -534,19 +547,19 @@ cout << endl;
 
         for (int i=0; i<num_particle; i++)
         { wpnorm[i] = wpnorm[i]*ga_new_pi[i]; }
-
+        sum_wp = 0;
         for (int i=0; i<num_particle; i++)
         { sum_wp += wpnorm[i]; }
 
         for (int i=0; i<num_particle; i++)
-        { wpnorm[i] = wpnorm[i]/sum_wp; }
+        { wpnorm[i] = wpnorm[i]/sum_wp; cout << "wpnorm =" << wpnorm[i] << endl;}
 
         // Resampling
         n_eff_inv = 0;
         for (int i=0; i<num_particle; i++)
         { n_eff_inv += (wpnorm[i]*wpnorm[i]); }
         n_eff = 1.0/n_eff_inv;
-
+cout << "e_ff =" << n_eff << endl;
         if (n_eff < num_particle*0.5)
         {
           target_msg.header.stamp = ros::Time::now();
@@ -624,11 +637,11 @@ cout << endl;
         double deter_x_next_ob;
 
         double pdetrate, pdetconc;
-        double ga_val_temp, g_d_s[num_particle][num_resol];
-        double zu_tot[num_particle], zu_sum, gds_sum;
+        double ga_val_temp, g_d_s[num_particle][num_resol], gds_temp[num_resol];
+        double zu_tot[num_particle], zu_sum[num_resol], gds_sum;
         double zwpnorm[num_particle], wpnorm_temp[num_particle];
 
-        double entropy, val;
+        double entropy_next, entropy_now, entropy_delta, val;
         int ind = 0;
 
         for (int kk=0; kk<4; kk++)
@@ -647,65 +660,89 @@ cout << endl;
             dist_throu = deter_x_next_ob/sqrt(pow(xnew[kk],2)+pow(ynew[kk],2));
             if (dist_throu <= building_size/2)
             {
-cout << "conflicts to building: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
-              var[kk] = 0;
+              double dZero = 0.0;
+              var[kk] = -1.0/dZero;
               obstacles[kk] = true;
+              cout << "conflicts to building: " << " x = " << xnext[kk];
+              cout << " y = " << ynext[kk] << endl;
+              cout << "Utility function[" << kk << "] = " << var[kk] << endl;
               continue;
             }
           }
           if (xnext[kk]<ax_min || ynext[kk]<ay_min || xnext[kk]>ax_max || ynext[kk]>ay_max)
           {
-cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
-            var[kk] = 0;
+            double dZero = 0.0;
+            var[kk] = -1.0/dZero;
+            cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
+            cout << "Utility function[" << kk << "] = " << var[kk] << endl;
             continue;
           }
           if (obstacles[kk] == false)
           {
-            entropy = 0;
+            entropy_delta = 0;
             for (int i=0; i<num_particle; i++)
             {
               pdetrate = mean_concentration(xnext[kk],ynext[kk],znext[kk],xp[i],yp[i],qp[i],wind_vel_mean,wind_dir_mean,dp[i],source_tau);
               pdetconc = pdetrate*dt;
               for (int j=0; j<num_resol; j++)
-              { g_d_s[i][j] = normalCDF(gauss_x[j], pdetconc, pdetconc*sen_sig_m_est + env_sig); }
-	      if (g_d_s[i][num_resol-1] == 0)
+              { gds_temp[j] = normalCDF(gauss_x[j], pdetconc, pdetconc*sen_sig_m_est + env_sig); }
+	      if (gds_temp[num_resol-1] == 0)
               {
                 for (int j=0; j<num_resol; j++)
-                { g_d_s[i][j] = 1/num_resol; }
+                { gds_temp[j] = 1.0/(double)num_resol; }
               }
               else
               {
                 for (int j=0; j<num_resol; j++)
-                { g_d_s[i][j] = g_d_s[i][j]/g_d_s[i][num_resol-1]; }
+                { gds_temp[j] = gds_temp[j]/gds_temp[num_resol-1]; }
               }
-              for (int j=num_resol-1; j>0; j--)
-              { g_d_s[i][j] = g_d_s[i][j] - g_d_s[i][j-1]; }
-
+              for (int j=1; j<num_resol; j++)
+              { g_d_s[i][j] = gds_temp[j] - gds_temp[j-1]; }
+              g_d_s[i][0] = gds_temp[0];
+//cout << gds_temp[num_resol-1] << endl;
             }
             for (int j=0; j<num_resol; j++)
             {
-              zu_sum = 0;
+              zu_sum[j] = 0;
               for (int i=0; i<num_particle; i++)
               {
                 zu_tot[i] = g_d_s[i][j]*wpnorm[i];
-                zu_sum += zu_tot[i];
+                zu_sum[j] += zu_tot[i];
               }
+//cout << "sum_wp[" << j << "] = " << sum_wp << endl;
+//cout << "zu_sum[" << j << "] = " << zu_sum[j] << endl;
               for (int i=0; i<num_particle; i++)
               {
-                zwpnorm[i] = zu_tot[i]/zu_sum;
-                if(zwpnorm[i] == 0)
-                {
-                  zwpnorm[i] = 1;
-                }
-                if(wpnorm[i] == 0)
-                {
-                  wpnorm_temp[i] = 1;
-                }
+                if (zu_sum[j] == 0)
+                { zwpnorm[i] = 1; }
                 else
+                { zwpnorm[i] = zu_tot[i]/zu_sum[j]; }
+
+                if(zwpnorm[i] == 0)
+                { zwpnorm[i] = 1; }
+
+                if(wpnorm[i] == 0)
+                { wpnorm_temp[i] = 1; }
+                else
+                { wpnorm_temp[i] = wpnorm[i]; }
+
+                entropy_next = -zu_sum[j]*zwpnorm[i]*log2(zwpnorm[i]);
+                entropy_now = -wpnorm_temp[i]*log2(wpnorm_temp[i]);
+                entropy_delta += -(entropy_next - entropy_now) ;
+
+                if (isnan(entropy_delta))
                 {
-                  wpnorm_temp[i] = wpnorm[i];
+               /*   for (int j=0; j<num_resol; j++)
+                  {
+                    cout <<endl <<"gds_temp["<<j<< "] = " <<gds_temp[j] << endl;
+                    cout << "gauss_x[" << j <<"] = " <<gauss_x[j] << endl <<endl;
+                  }*/
+                  cout << "entropy_next = " << entropy_next << endl;
+                  cout << "zwpnorm["<<i <<"][" << j << "] = " << zwpnorm[i] << endl;
+                  cout << "entropy_now = " << entropy_now << endl;
+                 
+                  break;
                 }
-                entropy -= -zu_sum*zwpnorm[i]*log2(zwpnorm[i]) + wpnorm_temp[i]*log2(wpnorm_temp[i]);
               }
             }
             int x_poten = (int)round(xnext[kk]);
@@ -714,8 +751,9 @@ cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
             { x_poten = 0; }
             if (y_poten < 0)
             { y_poten = 0; }
-            var[kk] = entropy/map[x_poten][y_poten];
-            cout << "Utility function = " << var << endl;
+            var[kk] = entropy_delta/map[x_poten][y_poten];
+            cout << "Utility function[" << kk << "] = " << var[kk] << endl;
+
             if (kk == 1)
             {
               ind = 1;
@@ -748,16 +786,48 @@ cout << "out of area: " << " x = " << xnext[kk] << " y = " << ynext[kk] << endl;
         ros::spinOnce();
         loop_rate.sleep();
       }
+
+      //declare message and sizes
+      sensor_msgs::PointCloud2 cloud;
+      cloud.header.stamp = ros::Time::now();
+      cloud.header.frame_id = "map";
+      cloud.width  = num_particle;
+      cloud.height = 1;
+      cloud.is_bigendian = false;
+      cloud.is_dense = false; // there may be invalid points
+
+      //for fields setup
+      sensor_msgs::PointCloud2Modifier modifier(cloud);
+      modifier.setPointCloud2FieldsByString(2,"xyz","rgb");
+      modifier.resize(num_particle);
+
+      //iterators
+      sensor_msgs::PointCloud2Iterator<float> out_x(cloud, "x");
+      sensor_msgs::PointCloud2Iterator<float> out_y(cloud, "y");
+      sensor_msgs::PointCloud2Iterator<float> out_z(cloud, "z");
+      sensor_msgs::PointCloud2Iterator<uint8_t> out_r(cloud, "r");
+      //sensor_msgs::PointCloud2Iterator<uint8_t> out_g(cloud, "g");
+      //sensor_msgs::PointCloud2Iterator<uint8_t> out_b(cloud, "b");
+
+      for(int i=0; i<num_particle; i++)
+      {
+        *out_x = xp[i];
+        *out_y = yp[i];
+        *out_z = qp[i];
+
+        *out_r = wpnorm[i];
+
+        
+        //increment
+        ++out_x;
+        ++out_y;
+        ++out_z;
+        ++out_r;
+      }
+      pf_pub.publish(cloud);
     } // if start the experiment
     else
     {
-//    cout << "neighbor_1 = " << neighbor_g[0] << endl;
-
-
-//    cout << "time = " << std::time(0) << endl;
-//    cout << "init_x = " << i_g_x << endl;
-//    cout << "init_y = " << i_g_y << endl;
-//    cout << "init_z = " << i_g_z << endl;
 	current_m_msg.pose.position.x = xx;
 	current_m_msg.pose.position.y = yy;
 	current_m_msg.pose.position.z = zz;
